@@ -1,3 +1,0 @@
-D:/project/project/card-correction/cmake-build-release-visual-studio/CMakeFiles/cvDetectionCorrection.dir
-D:/project/project/card-correction/cmake-build-release-visual-studio/CMakeFiles/edit_cache.dir
-D:/project/project/card-correction/cmake-build-release-visual-studio/CMakeFiles/rebuild_cache.dir
