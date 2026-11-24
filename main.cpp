@@ -1,5 +1,4 @@
 // Created by 钟顺民 on 2024/4/30.
-// 单据、证件矫正
 
 #include "correct.h"
 
@@ -25,7 +24,7 @@ std::filesystem::path default_model_directory() {
     }
     return ".";
 }
-}
+}  // namespace
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") {

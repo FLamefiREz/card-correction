@@ -22,7 +22,7 @@ Configure, build, and run the demo from the repository root. The demo saves `res
 
 ## Coding Style
 
-Use four-space indentation and follow the surrounding C++ style. Existing helpers include snake_case names such as `bbox_decode` and `crop_image`. Keep declarations and definitions in sync. The repository has no formatter or linter configuration.
+Use four-space indentation, PascalCase for types, and snake_case for functions and variables. Keep declarations and definitions in sync. Use short English comments to document coordinate spaces, tensor layouts, and other assumptions that affect results.
 
 ## Testing
 

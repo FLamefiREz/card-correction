@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     classes.row(0)[1] = 0.1f;
     classes.row(1)[0] = 0.2f;
     classes.row(1)[1] = 0.8f;
-    expect(decode_by_ind(classes, {0, 1}) == std::vector<int>({0, 1}),
+    expect(decode_class_indices(classes, {0, 1}) == std::vector<int>({0, 1}),
            "Each detection must use its own classification scores");
 
     ncnn::Mat heatmap(3, 2);
@@ -49,23 +49,23 @@ int main(int argc, char** argv) {
     heatmap.row(1)[2] = 0.8f;
     ncnn::Mat pooled(3, 2);
     pooled.fill(0.9f);
-    const auto masked = equal(heatmap, pooled);
+    const auto masked = suppress_non_maxima(heatmap, pooled);
     expect(masked.row(1)[2] == 0.0f, "Peak masking must suppress nonmaxima");
-    const auto peak = _topk(masked, 1);
-    expect(peak.indexs == std::vector<int>{2} && peak.xs == std::vector<float>{2} &&
-               peak.ys == std::vector<float>{0},
+    const auto peak = select_heatmap_peaks(masked, 1);
+    expect(peak.indices == std::vector<int>{2} && peak.x_coordinates == std::vector<float>{2} &&
+               peak.y_coordinates == std::vector<float>{0},
            "Peak coordinates must use the actual row width");
-    expect(_topk(masked, 20).indexs.size() == 6 && _topk(masked, 0).indexs.empty(),
+    expect(select_heatmap_peaks(masked, 20).indices.size() == 6 && select_heatmap_peaks(masked, 0).indices.empty(),
            "Top-K must respect the number of available scores");
 
-    const cv::Point2f third = get3rdPoint({100, 50}, {100, 0});
+    const cv::Point2f third = perpendicular_control_point({100, 50}, {100, 0});
     const float cross = 50 * (third.x - 100);
     expect(std::abs(cross) > 1.0f, "Affine control points must not be collinear");
     if (std::abs(cross) > 1.0f) {
-        const cv::Point2f center = transformPreds({96, 96}, {100, 50}, 100);
+        const cv::Point2f center = map_point_to_image({96, 96}, {100, 50}, 100);
         expect(cv::norm(center - cv::Point2f(100, 50)) < 0.01,
                "The output center must map back to the original center");
-        const cv::Point2f point = transformPreds({48, 48}, {100, 50}, 100);
+        const cv::Point2f point = map_point_to_image({48, 48}, {100, 50}, 100);
         expect(cv::norm(point - cv::Point2f(75, 25)) < 0.01,
                "The inverse affine transform must preserve scale and axes");
     }

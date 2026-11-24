@@ -1,5 +1,4 @@
 // Created by 钟顺民 on 2024/4/30.
-// 单据、证件矫正
 
 #include "correct.h"
 
@@ -49,7 +48,7 @@ vector<cv::Point2f> corners_from_box(const vector<float>& box) {
     }
     return {{box[0], box[1]}, {box[2], box[3]}, {box[4], box[5]}, {box[6], box[7]}};
 }
-}
+}  // namespace
 
 CardCorrector::CardCorrector(const std::filesystem::path& model_directory) {
     const auto param_path = (model_directory / "correction.param").string();
@@ -95,7 +94,7 @@ cv::Mat CardCorrector::correct(const cv::Mat& image) const {
     if (!is_heatmap(heatmap) || heatmap.w != heatmap_size || heatmap.h != heatmap_size) {
         throw std::runtime_error("Unexpected model heatmap shape or type");
     }
-    const auto peaks = _topk(equal(heatmap, pooled), 1);
+    const auto peaks = select_heatmap_peaks(suppress_non_maxima(heatmap, pooled), 1);
     if (peaks.scores.front() < confidence_threshold) {
         return image;
     }
@@ -110,10 +109,11 @@ cv::Mat CardCorrector::correct(const cv::Mat& image) const {
     require_head(types, 2, positions, "out3");
     require_head(offsets, 2, positions, "out4");
 
-    const auto direction = decode_by_ind(angles, peaks.indexs);
-    const auto document_type = decode_by_ind(types, peaks.indexs);
-    const auto boxes = bbox_decode(peaks, corners, offsets, direction, document_type,
-                                   static_cast<float>(1 / input_scale));
+    const auto angle_indices = decode_class_indices(angles, peaks.indices);
+    const auto type_indices = decode_class_indices(types, peaks.indices);
+    const auto boxes = decode_boxes(peaks, corners, offsets, angle_indices, type_indices,
+                                    static_cast<float>(1 / input_scale));
+    // Decoded corners include the letterbox offset in original-image pixels.
     auto points = corners_from_box(boxes.detections.front());
     for (auto& point : points) {
         point.x -= static_cast<float>(x_offset);
@@ -121,7 +121,7 @@ cv::Mat CardCorrector::correct(const cv::Mat& image) const {
     }
 
     auto result = crop_image(image, points);
-    switch (direction.front()) {
+    switch (angle_indices.front()) {
     case 1:
         cv::rotate(result, result, cv::ROTATE_90_COUNTERCLOCKWISE);
         break;
@@ -135,50 +135,50 @@ cv::Mat CardCorrector::correct(const cv::Mat& image) const {
     return result;
 }
 
-cv::Point2f get3rdPoint(const cv::Point2f& a, const cv::Point2f& b) {
+cv::Point2f perpendicular_control_point(const cv::Point2f& a, const cv::Point2f& b) {
     const auto direction = a - b;
     return b + cv::Point2f(-direction.y, direction.x);
 }
 
-cv::Mat getAffineTransform(const cv::Point2f& center, float scale) {
+cv::Mat heatmap_to_image_transform(const cv::Point2f& center, float scale) {
     const float half_heatmap = heatmap_size / 2.0f;
     cv::Point2f source[] = {center, center + cv::Point2f(0, -scale / 2), {}};
     cv::Point2f destination[] = {{half_heatmap, half_heatmap}, {half_heatmap, 0}, {}};
-    source[2] = get3rdPoint(source[0], source[1]);
-    destination[2] = get3rdPoint(destination[0], destination[1]);
+    source[2] = perpendicular_control_point(source[0], source[1]);
+    destination[2] = perpendicular_control_point(destination[0], destination[1]);
     return cv::getAffineTransform(destination, source);
 }
 
-cv::Point2f transformPreds(cv::Point2f pt, cv::Point2f center, float scale) {
-    const cv::Matx23d transform = getAffineTransform(center, scale);
-    const auto point = transform * cv::Vec3d(pt.x, pt.y, 1);
-    return {static_cast<float>(point[0]), static_cast<float>(point[1])};
+cv::Point2f map_point_to_image(cv::Point2f point, cv::Point2f center, float scale) {
+    const cv::Matx23d transform = heatmap_to_image_transform(center, scale);
+    const auto mapped = transform * cv::Vec3d(point.x, point.y, 1);
+    return {static_cast<float>(mapped[0]), static_cast<float>(mapped[1])};
 }
 
-vector<cv::Point2f> bbox_post_process(const vector<float>& box, cv::Point2f center, float scale) {
+vector<cv::Point2f> map_box_to_image(const vector<float>& box, cv::Point2f center, float scale) {
     auto points = corners_from_box(box);
-    cv::transform(points, points, getAffineTransform(center, scale));
+    cv::transform(points, points, heatmap_to_image_transform(center, scale));
     return points;
 }
 
-vector<vector<float>> gather_feat(const ncnn::Mat& heat_mat, const vector<int>& inds) {
-    if (!is_float_tensor(heat_mat) || heat_mat.dims != 2) {
+vector<vector<float>> gather_score_rows(const ncnn::Mat& class_scores, const vector<int>& indices) {
+    if (!is_float_tensor(class_scores) || class_scores.dims != 2) {
         throw std::invalid_argument("Expected a matrix of classification scores");
     }
     vector<vector<float>> rows;
-    rows.reserve(inds.size());
-    for (const int index : inds) {
-        if (index < 0 || index >= heat_mat.h) {
+    rows.reserve(indices.size());
+    for (const int index : indices) {
+        if (index < 0 || index >= class_scores.h) {
             throw std::out_of_range("Classification row is outside the tensor");
         }
-        const float* row = heat_mat.row(index);
-        rows.emplace_back(row, row + heat_mat.w);
+        const float* row = class_scores.row(index);
+        rows.emplace_back(row, row + class_scores.w);
     }
     return rows;
 }
 
-Topks topk(const vector<float>& cls_scores, int k) {
-    const int count = static_cast<int>(cls_scores.size());
+RankedScores select_top_scores(const vector<float>& scores, int k) {
+    const int count = static_cast<int>(scores.size());
     k = std::clamp(k, 0, count);
     if (k == 0) {
         return {};
@@ -187,28 +187,28 @@ Topks topk(const vector<float>& cls_scores, int k) {
     vector<std::pair<float, int>> ranked;
     ranked.reserve(count);
     for (int i = 0; i < count; ++i) {
-        ranked.emplace_back(cls_scores[i], i);
+        ranked.emplace_back(scores[i], i);
     }
     std::partial_sort(ranked.begin(), ranked.begin() + k, ranked.end(), std::greater<>{});
 
-    Topks result;
+    RankedScores result;
     result.scores.reserve(k);
-    result.indexs.reserve(k);
+    result.indices.reserve(k);
     for (int i = 0; i < k; ++i) {
         result.scores.push_back(ranked[i].first);
-        result.indexs.push_back(ranked[i].second);
+        result.indices.push_back(ranked[i].second);
     }
     return result;
 }
 
-_Topks _topk(const ncnn::Mat& scores, int k) {
+HeatmapPeaks select_heatmap_peaks(const ncnn::Mat& scores, int k) {
     if (!is_heatmap(scores) || k <= 0) {
         return {};
     }
 
     const float* values = scores.row(0);
     const int count = scores.w * scores.h;
-    Topks ranked;
+    RankedScores ranked;
     if (k == 1) {
         // Match the general path's tie break by choosing the largest index.
         int best = 0;
@@ -219,26 +219,25 @@ _Topks _topk(const ncnn::Mat& scores, int k) {
         }
         ranked = {{values[best]}, {best}};
     } else {
-        ranked = topk(vector<float>(values, values + count), k);
+        ranked = select_top_scores(vector<float>(values, values + count), k);
     }
 
-    _Topks result;
+    HeatmapPeaks result;
     result.scores = std::move(ranked.scores);
-    result.indexs = std::move(ranked.indexs);
-    result.clses.assign(result.indexs.size(), 0);
-    for (const int index : result.indexs) {
-        result.ys.push_back(static_cast<float>(index / scores.w));
-        result.xs.push_back(static_cast<float>(index % scores.w));
+    result.indices = std::move(ranked.indices);
+    result.class_indices.assign(result.indices.size(), 0);
+    for (const int index : result.indices) {
+        result.y_coordinates.push_back(static_cast<float>(index / scores.w));
+        result.x_coordinates.push_back(static_cast<float>(index % scores.w));
     }
     return result;
 }
 
-ncnn::Mat equal(ncnn::Mat heatmap, const ncnn::Mat& pooled) {
+ncnn::Mat suppress_non_maxima(ncnn::Mat heatmap, const ncnn::Mat& pooled) {
     if (!is_heatmap(heatmap) || !is_heatmap(pooled) ||
         heatmap.w != pooled.w || heatmap.h != pooled.h) {
         throw std::invalid_argument("Model heatmap and pooled heatmap must have matching dimensions");
     }
-    // The extracted heatmap is only used for peak selection after this call.
     for (int y = 0; y < heatmap.h; ++y) {
         float* scores = heatmap.row(y);
         const float* maxima = pooled.row(y);
@@ -251,13 +250,14 @@ ncnn::Mat equal(ncnn::Mat heatmap, const ncnn::Mat& pooled) {
     return heatmap;
 }
 
-bboxs bbox_decode(const _Topks& peaks, const ncnn::Mat& corners, const ncnn::Mat& offsets,
-                  const vector<int>& angles, const vector<int>& types, float scale) {
-    const auto count = peaks.indexs.size();
+DecodedBoxes decode_boxes(const HeatmapPeaks& peaks, const ncnn::Mat& corners, const ncnn::Mat& offsets,
+                          const vector<int>& angles, const vector<int>& types, float scale) {
+    const auto count = peaks.indices.size();
     if (count == 0) {
         return {};
     }
-    if (peaks.scores.size() != count || peaks.xs.size() != count || peaks.ys.size() != count ||
+    if (peaks.scores.size() != count ||
+        peaks.x_coordinates.size() != count || peaks.y_coordinates.size() != count ||
         angles.size() != count || types.size() != count) {
         throw std::invalid_argument("Each peak must have coordinates, a score, an angle and a type");
     }
@@ -266,19 +266,19 @@ bboxs bbox_decode(const _Topks& peaks, const ncnn::Mat& corners, const ncnn::Mat
         require_head(offsets, 2, corners.h, "offsets");
     }
 
-    bboxs boxes;
-    boxes.ids = peaks.indexs;
+    DecodedBoxes boxes;
+    boxes.peak_indices = peaks.indices;
     boxes.detections.reserve(count);
     const float pixel_scale = model_stride * scale;
     for (std::size_t i = 0; i < count; ++i) {
-        const int index = peaks.indexs[i];
+        const int index = peaks.indices[i];
         if (index < 0 || index >= corners.h) {
             throw std::out_of_range("Peak index is outside the corners tensor");
         }
         const float* corner = corners.row(index);
         const float* offset = offsets.empty() ? nullptr : offsets.row(index);
-        const float x = peaks.xs[i] + (offset ? offset[0] : 0.5f);
-        const float y = peaks.ys[i] + (offset ? offset[1] : 0.5f);
+        const float x = peaks.x_coordinates[i] + (offset ? offset[0] : 0.5f);
+        const float y = peaks.y_coordinates[i] + (offset ? offset[1] : 0.5f);
 
         vector<float> box;
         box.reserve(11);
@@ -294,7 +294,7 @@ bboxs bbox_decode(const _Topks& peaks, const ncnn::Mat& corners, const ncnn::Mat
     return boxes;
 }
 
-vector<int> max_2dim(const vector<vector<float>>& classes) {
+vector<int> argmax_rows(const vector<vector<float>>& classes) {
     vector<int> result;
     result.reserve(classes.size());
     for (const auto& row : classes) {
@@ -308,8 +308,8 @@ vector<int> max_2dim(const vector<vector<float>>& classes) {
     return result;
 }
 
-vector<int> decode_by_ind(const ncnn::Mat& heat_mat, const vector<int>& inds) {
-    return max_2dim(gather_feat(heat_mat, inds));
+vector<int> decode_class_indices(const ncnn::Mat& class_scores, const vector<int>& indices) {
+    return argmax_rows(gather_score_rows(class_scores, indices));
 }
 
 float distance(float x1, float y1, float x2, float y2) {
