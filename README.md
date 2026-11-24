@@ -2,27 +2,33 @@
 证件、单据等矫正
 
 ## 功能描述
-矫正图中任意多张单证的方向，可稍加修改移植到移动端设备。
 
-注意：该仓库只提供了单张单证矫正的示例代码，如果需要支持多张请修改main.cpp，和这个功能相关的参数为int k。
+示例检测图中置信度最高的单张证件或单据，并进行透视裁剪和方向矫正。没有检测达到阈值时保存原图。批量处理多张图片时，可以复用一个 `CardCorrector` 实例。
 
-## 安装
-### 1 下载仓库
-```shell
-git clone https://github.com/FLamefiREz/card-correction.git
-cd ./card-correction
+同一张图中输出多张证件需要对多个候选框分别筛选、去重和裁剪，并返回多张结果。调整候选数量只会影响检测阶段。
+
+## 构建
+
+需要 CMake 3.27 或更新版本、C++17 编译器、[OpenCV 4](https://opencv.org/releases/) 和 [ncnn](https://github.com/Tencent/ncnn/releases)。从仓库根目录运行。以下示例使用 Windows PowerShell 和 Visual Studio 生成器，请替换为本机依赖路径。
+
+```powershell
+cmake -S . -B build -A x64 "-DOpenCV_DIR=C:/path/to/opencv/build" "-Dncnn_DIR=C:/path/to/ncnn/x64/lib/cmake/ncnn"
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-### 2 配置opencv环境
-### 3 下载ncnn库
-https://github.com/Tencent/ncnn/releases
+若用 vcpkg 安装依赖，在首次配置时传入 `-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake`。使用动态库时，将所用依赖的 DLL 目录加入 `PATH`。
 
+## 运行
 
-## 效果展示
+```powershell
+.\build\Release\cvDetectionCorrection.exe
+.\build\Release\cvDetectionCorrection.exe --no-gui example/1.jpg build/result.jpg
+```
 
-原图![1.jpg](example%2F1.jpg)
+模型和图片需要在本地准备。把 ncnn 格式的 `correction.param` 和 `correction.bin` 放在仓库根目录或 `model/`。如果 `model/` 中两个文件都存在，程序优先使用该目录，也可以通过第三个位置参数指定目录。
 
-矫正后![result.jpg](example%2Fresult.jpg)
+默认读取 `example/1.jpg`，保存 `result.jpg` 并打开预览。也可以传入自己的图片路径。不准备模型和样图时，CTest 仍会运行单元测试。配置 CMake 时，如果仓库根目录的模型文件和 `example/1.jpg` 已就绪，CTest 还会运行样图推理测试。
 
 ## 参考网站
 
@@ -31,8 +37,3 @@ https://www.modelscope.cn/models/iic/cv_resnet18_card_correction/summary 感谢�
 https://github.com/Tencent/ncnn 感谢nihui开源的框架支持
 
 https://github.com/FeiGeChuanShu/ncnn_paddleocr 后续证件识别
-
-## 模型
-为防止伸手党，需要模型请发邮件到734001892@qq.com，star！star！star！
-
-

@@ -1,23 +1,24 @@
 cmake_minimum_required(VERSION 3.27)
-project(cvDetectionCorrection)
+project(cvDetectionCorrection LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs highgui)
+find_package(ncnn CONFIG REQUIRED)
 
-SET(CMAKE_TOOLCHAIN_FILE "D:\\project\\project\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake")
-set(OpenCV_DIR "D:/project/project/vcpkg/installed/x64-windows/share/opencv4")
-find_package(OpenCV REQUIRED)
-#include_directories( ${OpenCV_INCLUDE_DIRS})
+add_library(card_correction STATIC correct.cpp)
+target_compile_features(card_correction PUBLIC cxx_std_17)
+target_link_libraries(card_correction PUBLIC ncnn opencv_core opencv_imgproc)
 
-set(ncnn_DIR ncnn-20240410-windows-vs2022/x64/lib/cmake/ncnn)
-find_package(ncnn REQUIRED)
+add_executable(cvDetectionCorrection main.cpp)
+target_link_libraries(cvDetectionCorrection PRIVATE card_correction opencv_imgcodecs opencv_highgui)
 
-add_executable(cvDetectionCorrection main.cpp
-        correct.cpp)
-
-target_link_libraries(cvDetectionCorrection
-        ncnn
-        opencv_core
-        opencv_imgproc
-        opencv_highgui
-        opencv_freetype
-)
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(correction_tests tests/correction_tests.cpp)
+    target_link_libraries(correction_tests PRIVATE card_correction opencv_imgcodecs)
+    add_test(NAME correction_unit COMMAND correction_tests)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/correction.param"
+       AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/correction.bin"
+       AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/example/1.jpg")
+        add_test(NAME correction_sample COMMAND correction_tests "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+endif()

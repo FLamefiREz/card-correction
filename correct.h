@@ -1,35 +1,33 @@
-//
-// Created by 钟顺民 on 2024/4/30.
-// email 734001892@qq.com z734001892@gmail.com
-// 单据、证件矫正
-//
+#pragma once
 
-#include <iostream>
 #include "net.h"
-#include "opencv2/opencv.hpp"
+#include <opencv2/core.hpp>
+
+#include <filesystem>
 #include <vector>
-#include <cmath>
 
-using namespace cv;
-using namespace std;
-using namespace ncnn;
+class CardCorrector {
+public:
+    explicit CardCorrector(const std::filesystem::path& model_directory);
 
-const int target_size = 768;
+    // Returns the input image when no detection meets the confidence threshold.
+    cv::Mat correct(const cv::Mat& image) const;
 
+private:
+    ncnn::Net model_;
+};
 
-struct bboxs{
-    vector<vector<float>> detections;
+struct bboxs {
+    std::vector<std::vector<float>> detections;
     std::vector<int> ids;
 };
 
-
-struct Topks{
+struct Topks {
     std::vector<float> scores;
     std::vector<int> indexs;
 };
 
-
-struct _Topks{
+struct _Topks {
     std::vector<float> scores;
     std::vector<int> indexs;
     std::vector<int> clses;
@@ -39,16 +37,17 @@ struct _Topks{
 
 cv::Point2f get3rdPoint(const cv::Point2f& a, const cv::Point2f& b);
 cv::Mat getAffineTransform(const cv::Point2f& center, float scale);
-cv::Point2f transformPreds( cv::Point2f pt,  cv::Point2f center, float scale);
-vector<cv::Point2f> bbox_post_process(vector<float> bbox_top1,cv::Point2f center, float scale);
-std::vector<vector<float>> gather_feat(ncnn::Mat heat_mat,vector<int> inds);
-
-Topks topk(std::vector<float>& cls_scores, int topk);
-_Topks _topk(ncnn::Mat scores,int k);
-ncnn::Mat equal(ncnn::Mat hitmap, ncnn::Mat hitmap_pool);
-bboxs bbox_decode(_Topks _topks,ncnn::Mat wh_mat,ncnn::Mat reg,vector<int> angle,vector<int> ftype,float scale);
-vector<int> max_2dim(vector<vector<float>> clses);
-vector<int> decode_by_ind(ncnn::Mat heat_mat,vector<int> inds);
-float distance(float x1, float y1, float x2,float y2);
-cv::Mat crop_image(cv::Mat rgb,vector<cv::Point2f> bbox);
-cv::Mat crop_image(cv::Mat rgb,vector<float> bbox);
+cv::Point2f transformPreds(cv::Point2f pt, cv::Point2f center, float scale);
+std::vector<cv::Point2f> bbox_post_process(const std::vector<float>& box,
+                                           cv::Point2f center, float scale);
+std::vector<std::vector<float>> gather_feat(const ncnn::Mat& heat_mat, const std::vector<int>& inds);
+Topks topk(const std::vector<float>& cls_scores, int k);
+_Topks _topk(const ncnn::Mat& scores, int k);
+ncnn::Mat equal(ncnn::Mat heatmap, const ncnn::Mat& pooled);
+bboxs bbox_decode(const _Topks& peaks, const ncnn::Mat& corners, const ncnn::Mat& offsets,
+                  const std::vector<int>& angles, const std::vector<int>& types, float scale);
+std::vector<int> max_2dim(const std::vector<std::vector<float>>& classes);
+std::vector<int> decode_by_ind(const ncnn::Mat& heat_mat, const std::vector<int>& inds);
+float distance(float x1, float y1, float x2, float y2);
+cv::Mat crop_image(const cv::Mat& image, const std::vector<cv::Point2f>& points);
+cv::Mat crop_image(const cv::Mat& image, const std::vector<float>& box);
